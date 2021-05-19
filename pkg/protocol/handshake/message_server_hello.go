@@ -17,6 +17,8 @@ type MessageServerHello struct {
 	Version protocol.Version
 	Random  Random
 
+	SessionID []byte
+
 	CipherSuiteID     *uint16
 	CompressionMethod *protocol.CompressionMethod
 	Extensions        []extension.Extension
@@ -44,7 +46,8 @@ func (m *MessageServerHello) Marshal() ([]byte, error) {
 	rand := m.Random.MarshalFixed()
 	copy(out[2:], rand[:])
 
-	out = append(out, 0x00) // SessionID
+	out = append(out, byte(len(m.SessionID)))
+	out = append(out, m.SessionID...)
 
 	out = append(out, []byte{0x00, 0x00}...)
 	binary.BigEndian.PutUint16(out[len(out)-2:], *m.CipherSuiteID)

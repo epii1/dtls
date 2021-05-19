@@ -3,6 +3,7 @@ package dtls
 import (
 	"context"
 	"crypto/rand"
+	"encoding/hex"
 
 	"github.com/pion/dtls/v2/pkg/crypto/elliptic"
 	"github.com/pion/dtls/v2/pkg/protocol"
@@ -69,6 +70,17 @@ func flight0Parse(ctx context.Context, c flightConn, state *State, cache *handsh
 
 	if cfg.extendedMasterSecret == RequireExtendedMasterSecret && !state.extendedMasterSecret {
 		return 0, &alert.Alert{Level: alert.Fatal, Description: alert.InsufficientSecurity}, errServerRequiredButNoClientEMS
+	}
+
+	if len(clientHello.SessionID) > 0 {
+		id := hex.EncodeToString(clientHello.SessionID)
+		if v, ok := Sessions.Load(id); ok {
+			if vv, ok := v.([]byte); ok {
+				state.masterSecret = vv
+				state.SessionID = clientHello.SessionID
+				return flight6, nil, nil
+			}
+		}
 	}
 
 	if state.localKeypair == nil {

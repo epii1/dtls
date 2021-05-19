@@ -28,7 +28,39 @@ func flight6Parse(ctx context.Context, c flightConn, state *State, cache *handsh
 }
 
 func flight6Generate(c flightConn, state *State, cache *handshakeCache, cfg *handshakeConfig) ([]*packet, *alert.Alert, error) {
+	if len(state.SessionID) > 0 && !state.cipherSuite.IsInitialized() {
+		serverRandom := state.localRandom.MarshalFixed()
+		clientRandom := state.remoteRandom.MarshalFixed()
+
+		if err := state.cipherSuite.Init(state.masterSecret, clientRandom[:], serverRandom[:], false); err != nil {
+			return nil, &alert.Alert{Level: alert.Fatal, Description: alert.InternalError}, err
+		}
+		cfg.writeKeyLog(keyLogLabelTLS12, clientRandom[:], state.masterSecret)
+	}
+
 	var pkts []*packet
+
+	var serverHello *handshake.Handshake
+	if len(state.SessionID) > 0 {
+		cipherSuiteID := uint16(state.cipherSuite.ID())
+		serverHello = &handshake.Handshake{
+			Message: &handshake.MessageServerHello{
+				Version:           protocol.Version1_2,
+				Random:            state.localRandom,
+				SessionID:         state.SessionID,
+				CipherSuiteID:     &cipherSuiteID,
+				CompressionMethod: defaultCompressionMethods()[0],
+			},
+		}
+		pkts = append(pkts, &packet{
+			record: &recordlayer.RecordLayer {
+				Header: recordlayer.Header{
+					Version: protocol.Version1_2,
+				},
+				Content: serverHello,
+			},
+		})
+	}
 
 	pkts = append(pkts,
 		&packet{
@@ -53,6 +85,13 @@ func flight6Generate(c flightConn, state *State, cache *handshakeCache, cfg *han
 			handshakeCachePullRule{handshake.TypeCertificateVerify, cfg.initialEpoch, true, false},
 			handshakeCachePullRule{handshake.TypeFinished, cfg.initialEpoch + 1, true, false},
 		)
+		if len(state.SessionID) > 0 {
+			plainText = cache.pullAndMerge(
+				handshakeCachePullRule{handshake.TypeClientHello, cfg.initialEpoch, true, false},
+			)
+			b, _:= serverHello.Marshal()
+			plainText = append(plainText, b...)
+		}
 
 		var err error
 		state.localVerifyData, err = prf.VerifyDataServer(state.masterSecret, plainText, state.cipherSuite.HashFunc())
